@@ -16,6 +16,7 @@ Frontend software for simulating I/O with the server software
 - Admin page with:
  - Entry & exit gate override switches
  - List of authorized badge codes (with ability to add/remove)
+ - Fake CCTV "choose camera" display
 
 ## Demo Outputs (visualizers)
 - Exit gate
@@ -39,10 +40,15 @@ Local web server handling lifecycle & communication between components
 
 ## Database
 - Contains authorized badge IDs
-- Contains parking occupancy stats (cars in the facility, per-spot occupancy boolean)
+- Contains parking occupancy stats (cars in the facility, per-spot occupancy booleans/floor bitmaps)
 - Contains entry log (badges IDs scanned for entry)
 - Allows validation of Badge ID
+
+## Parking Sensor Controller
+- Listens to per-spot sensor inputs and modifies database accordingly
+- Sets parking lights to reflect database state
 
 ## Admin API
 - Allows entry & exit gate overrides via gate controller
 - Adding, removing, querying list of badge IDs
+- Simulated/fake CCTV feed
