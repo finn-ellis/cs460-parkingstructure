@@ -14,6 +14,7 @@ Frontend software for simulating I/O with the server software
 - RFID entry (just input an ID)
 - Choose spot to park in GUI
 - Admin page with:
+ - Simple login enter credentials page
  - Entry & exit gate override switches
  - List of authorized badge codes (with ability to add/remove)
  - Fake CCTV "choose camera" display
@@ -33,10 +34,8 @@ Local web server handling lifecycle & communication between components
 - Connects simulated exit gate sensor to exit game actuator
 - Makes open signal accessible to RFID controller. Closes entry gate after gate entered sensor is triggered.
 - Makes admin override controls accessible
-
-## RFID Controller
-- Simulates communication with an RFID driver. Receives a badge ID from a scanned badge & validates against database
-- Sends open signal to gate controller on successful RFID scan
+- Makes an RFID scan API accessible. Receives a badge ID from a scanned badge & validates against database
+- Calls open on successful RFID scan
 
 ## Database
 - Contains authorized badge IDs
@@ -49,6 +48,7 @@ Local web server handling lifecycle & communication between components
 - Sets parking lights to reflect database state
 
 ## Admin API
+- Allows simple login functionality
 - Allows entry & exit gate overrides via gate controller
 - Adding, removing, querying list of badge IDs
 - Simulated/fake CCTV feed
