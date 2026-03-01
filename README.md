@@ -6,6 +6,20 @@ Liepa Lavickyte
 Younes Slaoui
 
 # Run details
+Python flask backend & node/react/vite frontend.
+I recommend initializing a Python virtual environment first & installing dependencies there. Commands:
+```sh
+python3 -m venv .venv
+source .venv/bin/activate #windows: .\.venv\bin\Activate.ps1 or something
+pip install -r requirements.txt
+```
+
+Frontend:
+```sh
+cd src/demo/frontend
+npm run dev #or npm run preview, etc
+```
+
 To run, first run the backend with `python3 -m flask --app src/server/ run`
 Then, run the frontend with `npm --prefix src/demo/frontend run dev`
 
