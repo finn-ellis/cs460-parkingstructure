@@ -5,6 +5,10 @@ Ike Osode
 Liepa Lavickyte
 Younes Slaoui
 
+# Run details
+To run, first run the backend with `python3 -m flask --app src/server/ run`
+Then, run the frontend with `npm --prefix src/demo/frontend run dev`
+
 # Implementation Details
 # Demo
 Frontend software for simulating I/O with the server software

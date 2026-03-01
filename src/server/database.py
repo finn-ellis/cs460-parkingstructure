@@ -6,6 +6,7 @@ event logs, power state, and admin credentials.
 All data is ephemeral -- resets on server restart.
 """
 
+import queue
 import threading
 from datetime import datetime, timezone
 
@@ -31,9 +32,13 @@ class Database:
 
         # --- Gates ---
         # gate 1 = entry, gate 2 = exit
+        # approach_sensor : True while a vehicle is waiting at the approach lane
+        # clearance_sensor: True while a vehicle is breaking the IR beam in the gate path
         self.gates = {
-            1: {"type": "entry", "open": False, "override": False, "override_state": False},
-            2: {"type": "exit", "open": False, "override": False, "override_state": False},
+            1: {"type": "entry", "open": False, "override": False, "override_state": False,
+                "approach_sensor": False, "clearance_sensor": False},
+            2: {"type": "exit",  "open": False, "override": False, "override_state": False,
+                "approach_sensor": False, "clearance_sensor": False},
         }
 
         # --- Event log ---
@@ -47,6 +52,11 @@ class Database:
 
         # --- System flags ---
         self.lockdown = False
+
+        # --- SSE gate event subscribers ---
+        # Each entry is a queue.SimpleQueue; the /gate/stream endpoint
+        # adds one per connected client and reads from it.
+        self._gate_listeners: list[queue.SimpleQueue] = []
 
         # --- Admin credentials (demo only) ---
         self.admin_username = "admin"
@@ -82,24 +92,88 @@ class Database:
 
     def set_gate_state(self, gate_id, is_open):
         with self._lock:
-            if gate_id in self.gates:
-                self.gates[gate_id]["open"] = is_open
-                return True
-            return False
+            if gate_id not in self.gates:
+                return False
+            self.gates[gate_id]["open"] = is_open
+        # Notify outside the lock — models actuator position feedback signal
+        self._notify_gate_listeners(gate_id)
+        return True
 
     def set_gate_override(self, gate_id, override_enabled, override_state):
         with self._lock:
-            if gate_id in self.gates:
-                self.gates[gate_id]["override"] = override_enabled
-                self.gates[gate_id]["override_state"] = override_state
-                if override_enabled:
-                    self.gates[gate_id]["open"] = override_state
-                return True
-            return False
+            if gate_id not in self.gates:
+                return False
+            self.gates[gate_id]["override"] = override_enabled
+            self.gates[gate_id]["override_state"] = override_state
+            if override_enabled:
+                self.gates[gate_id]["open"] = override_state
+            else:
+                # Returning to normal sensor-driven control — safe default is closed
+                self.gates[gate_id]["open"] = False
+        # Notify outside the lock — models actuator position feedback signal
+        self._notify_gate_listeners(gate_id)
+        return True
 
     def get_all_gates(self):
         with self._lock:
             return {gid: dict(g) for gid, g in self.gates.items()}
+
+    # ---- Sensor state helpers ----
+    # These model the physical sensor inputs that feed into the gate controller.
+
+    def set_approach_sensor(self, gate_id, active):
+        """Approach-lane sensor: True = vehicle waiting at the gate."""
+        with self._lock:
+            if gate_id not in self.gates:
+                return False
+            self.gates[gate_id]["approach_sensor"] = active
+        self._notify_gate_listeners(gate_id)
+        return True
+
+    def set_clearance_sensor(self, gate_id, active):
+        """IR clearance sensor: True = vehicle is in the gate path (beam broken)."""
+        with self._lock:
+            if gate_id not in self.gates:
+                return False
+            self.gates[gate_id]["clearance_sensor"] = active
+        self._notify_gate_listeners(gate_id)
+        return True
+
+    # ---- Gate SSE helpers ----
+
+    def subscribe_gate_events(self) -> queue.SimpleQueue:
+        """Register a new SSE client; returns a queue it should read from."""
+        q: queue.SimpleQueue = queue.SimpleQueue()
+        with self._lock:
+            self._gate_listeners.append(q)
+        return q
+
+    def unsubscribe_gate_events(self, q: queue.SimpleQueue) -> None:
+        """Remove a disconnected SSE client's queue."""
+        with self._lock:
+            try:
+                self._gate_listeners.remove(q)
+            except ValueError:
+                pass
+
+    def _notify_gate_listeners(self, gate_id: int) -> None:
+        """
+        Broadcast the current gate state to all SSE clients.
+        Called after any gate state mutation, outside the main lock.
+        Models the physical feedback signal a real gate actuator sends
+        back to the main controller after executing a command.
+        """
+        gate_data = self.get_gate(gate_id)
+        if gate_data is None:
+            return
+        payload = {"gate_id": gate_id, **gate_data}
+        with self._lock:
+            listeners = list(self._gate_listeners)
+        for q in listeners:
+            try:
+                q.put_nowait(payload)
+            except Exception:
+                pass
 
     # ---- Occupancy helpers ----
 

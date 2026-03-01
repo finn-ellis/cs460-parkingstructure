@@ -6,7 +6,11 @@ Implements use cases:
   4.3 Successful Exit  (detect -> check lockdown -> open -> log -> close)
 """
 
-from flask import Blueprint, jsonify, request
+import json
+import queue
+
+from flask import Blueprint, Response, jsonify, request, stream_with_context
+
 from .database import db
 
 gate_bp = Blueprint("gate", __name__, url_prefix="/gate")
@@ -16,6 +20,45 @@ gate_bp = Blueprint("gate", __name__, url_prefix="/gate")
 def gate_status():
     """Return current state of all gates."""
     return jsonify(db.get_all_gates())
+
+
+@gate_bp.route("/stream", methods=["GET"])
+def gate_stream():
+    """
+    SSE stream — pushes gate state to all connected clients whenever
+    setGateState() or enableGateOverride() is called by any controller.
+
+    Models the real-world feedback channel: after the main controller
+    commands a gate actuator, the position sensor confirms the new state
+    and broadcasts it to all displays in the facility.
+    """
+    @stream_with_context
+    def event_stream():
+        q = db.subscribe_gate_events()
+        # Send current state of both gates immediately on connect
+        for gate_id, gate_data in db.get_all_gates().items():
+            yield f"data: {json.dumps({'gate_id': gate_id, **gate_data})}\n\n"
+        try:
+            while True:
+                try:
+                    payload = q.get(timeout=25)
+                    yield f"data: {json.dumps(payload)}\n\n"
+                except queue.Empty:
+                    # Heartbeat keeps the connection alive through proxies
+                    yield ": heartbeat\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            db.unsubscribe_gate_events(q)
+
+    return Response(
+        event_stream(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @gate_bp.route("/status/<int:gate_id>", methods=["GET"])
@@ -33,17 +76,30 @@ def single_gate_status(gate_id):
 def vehicle_detected():
     """
     isVehicleDetected(gateID)
-    Called when the entry/exit gate sensor detects a vehicle.
-    For exit gates (and no lockdown), automatically opens the gate.
-    For entry gates, returns waiting-for-rfid so the frontend can prompt a scan.
+    Approach-lane sensor input.  active=True means a vehicle is present;
+    active=False means the lane cleared (vehicle backed away).
+
+    Rising edge  → entry gate prompts RFID; exit gate opens (if no lockdown/override).
+    Sensor state is persisted in the database so the SSE stream reflects it
+    on all connected displays — the same way a real facility controller would
+    broadcast actuator state after receiving a sensor signal.
     """
     data = request.get_json(force=True)
     gate_id = data.get("gate_id")
+    active = bool(data.get("active", True))   # sensor toggle: True = vehicle present
+
     gate = db.get_gate(gate_id)
     if gate is None:
         return jsonify({"error": "Gate not found"}), 404
 
-    # If gate has admin override active, follow override state
+    # Persist sensor state — SSE notifies all connected displays
+    db.set_approach_sensor(gate_id, active)
+
+    if not active:
+        # Falling edge: vehicle backed away — no gate action needed
+        return jsonify({"gate_id": gate_id, "action": "sensor_cleared"})
+
+    # Rising edge: vehicle present — evaluate gate logic
     if gate["override"]:
         return jsonify({
             "gate_id": gate_id,
@@ -52,14 +108,14 @@ def vehicle_detected():
         })
 
     if gate["type"] == "exit":
-        # Use case 4.3 -- exit flow
+        # Use case 4.3 — exit flow
         if db.lockdown:
             return jsonify({"gate_id": gate_id, "action": "denied", "reason": "lockdown"}), 403
         db.set_gate_state(gate_id, True)
         db.log_event("Exit_VehicleDetected", gate_id=gate_id)
         return jsonify({"gate_id": gate_id, "action": "gate_opened"})
 
-    # Entry gate -- wait for RFID
+    # Entry gate — wait for RFID
     return jsonify({"gate_id": gate_id, "action": "awaiting_rfid"})
 
 
@@ -114,32 +170,50 @@ def rfid_scan():
 @gate_bp.route("/vehicle-entered", methods=["POST"])
 def vehicle_entered():
     """
-    Called after the vehicle has passed through the entry gate.
-    Increments global occupancy and closes the gate.
-    (isPathBlocked() is simulated by the frontend triggering this endpoint.)
+    IR clearance-sensor input.  active=True means the vehicle is currently
+    breaking the beam (in the gate path); active=False means the beam has
+    restored (vehicle fully cleared — isPathBlocked() returned False).
+
+    Falling edge (active=False) is the trigger for:
+      - occupancy increment/decrement
+      - approach sensor reset (vehicle has moved on)
+      - gate close (unless held by admin override)
+
+    Storing the sensor state lets the SSE stream reflect it on all displays.
     """
     data = request.get_json(force=True)
     gate_id = data.get("gate_id")
+    active = bool(data.get("active", True))   # sensor toggle: True = beam broken
+
     gate = db.get_gate(gate_id)
     if gate is None:
         return jsonify({"error": "Gate not found"}), 404
 
+    # Persist sensor state — SSE notifies all connected displays
+    db.set_clearance_sensor(gate_id, active)
+
+    if active:
+        # Rising edge: vehicle entering the path — wait for it to clear
+        return jsonify({"gate_id": gate_id, "action": "vehicle_in_path"})
+
+    # Falling edge: vehicle has fully cleared the IR beam
     if not gate["open"] and not gate["override"]:
         return jsonify({"error": "Gate is closed; invalid sensor sequence"}), 400
 
     if gate["type"] == "entry":
-        count = db.increment_cars()
+        db.increment_cars()
     else:
-        # For exit: decrement
-        count = db.decrement_cars()
+        db.decrement_cars()
         db.log_event("Exit", gate_id=gate_id)
+
+    # Approach sensor clears once the vehicle has moved on
+    db.set_approach_sensor(gate_id, False)
 
     # Close gate behind the vehicle unless held by admin override
     if not gate["override"]:
         db.set_gate_state(gate_id, False)
 
     updated_gate = db.get_gate(gate_id)
-
     occupancy = db.get_occupancy()
     return jsonify({
         "gate_id": gate_id,
