@@ -21,26 +21,22 @@ def power_status():
 @power_bp.route("/failure", methods=["POST"])
 def power_failure():
     """
-    Simulate a power failure.
+    Sensor input: simulates a power failure signal.
     switchSource(sourceID) -- switches to UPS.
     setPowerCut(true)      -- cuts non-essential hardware.
+    The DB layer emits power_update via WebSocket.
     """
-    db.set_power_source("ups")
-    db.set_outage_mode(True)
+    db.set_power_state("ups", True)
     db.log_event("PowerFailure", details={"source": "ups", "outage_mode": True})
-    return jsonify({
-        "source": "ups",
-        "outage_mode": True,
-    })
+    return jsonify({"success": True})
 
 
 @power_bp.route("/restore", methods=["POST"])
 def power_restore():
-    """Simulate power restoration back to grid."""
-    db.set_power_source("grid")
-    db.set_outage_mode(False)
+    """
+    Sensor input: simulates power restoration back to grid.
+    The DB layer emits power_update via WebSocket.
+    """
+    db.set_power_state("grid", False)
     db.log_event("PowerRestored", details={"source": "grid", "outage_mode": False})
-    return jsonify({
-        "source": "grid",
-        "outage_mode": False,
-    })
+    return jsonify({"success": True})

@@ -6,9 +6,10 @@ event logs, power state, and admin credentials.
 All data is ephemeral -- resets on server restart.
 """
 
-import queue
 import threading
 from datetime import datetime, timezone
+
+from .events import socketio
 
 
 class Database:
@@ -52,11 +53,6 @@ class Database:
 
         # --- System flags ---
         self.lockdown = False
-
-        # --- SSE gate event subscribers ---
-        # Each entry is a queue.SimpleQueue; the /gate/stream endpoint
-        # adds one per connected client and reads from it.
-        self._gate_listeners: list[queue.SimpleQueue] = []
 
         # --- Admin credentials (demo only) ---
         self.admin_username = "admin"
@@ -139,26 +135,11 @@ class Database:
         self._notify_gate_listeners(gate_id)
         return True
 
-    # ---- Gate SSE helpers ----
-
-    def subscribe_gate_events(self) -> queue.SimpleQueue:
-        """Register a new SSE client; returns a queue it should read from."""
-        q: queue.SimpleQueue = queue.SimpleQueue()
-        with self._lock:
-            self._gate_listeners.append(q)
-        return q
-
-    def unsubscribe_gate_events(self, q: queue.SimpleQueue) -> None:
-        """Remove a disconnected SSE client's queue."""
-        with self._lock:
-            try:
-                self._gate_listeners.remove(q)
-            except ValueError:
-                pass
+    # ---- Gate WebSocket helpers ----
 
     def _notify_gate_listeners(self, gate_id: int) -> None:
         """
-        Broadcast the current gate state to all SSE clients.
+        Broadcast the current gate state to all connected WebSocket clients.
         Called after any gate state mutation, outside the main lock.
         Models the physical feedback signal a real gate actuator sends
         back to the main controller after executing a command.
@@ -167,13 +148,7 @@ class Database:
         if gate_data is None:
             return
         payload = {"gate_id": gate_id, **gate_data}
-        with self._lock:
-            listeners = list(self._gate_listeners)
-        for q in listeners:
-            try:
-                q.put_nowait(payload)
-            except Exception:
-                pass
+        socketio.emit("gate_update", payload)
 
     # ---- Occupancy helpers ----
 
@@ -181,13 +156,15 @@ class Database:
         with self._lock:
             if self.num_cars_inside < self.capacity:
                 self.num_cars_inside += 1
-            return self.num_cars_inside
+        socketio.emit("occupancy_update", self.get_occupancy())
+        return self.num_cars_inside
 
     def decrement_cars(self):
         with self._lock:
             if self.num_cars_inside > 0:
                 self.num_cars_inside -= 1
-            return self.num_cars_inside
+        socketio.emit("occupancy_update", self.get_occupancy())
+        return self.num_cars_inside
 
     def get_occupancy(self):
         with self._lock:
@@ -206,8 +183,15 @@ class Database:
             for floor_id, floor_spots in self.spots.items():
                 if spot_id in floor_spots:
                     floor_spots[spot_id] = occupied
-                    return floor_id
-            return None
+                    break
+            else:
+                return None
+        # Emit updated floor state to all connected clients
+        floor_info = self.get_floor(floor_id)
+        if floor_info:
+            status = "FULL" if floor_info["available"] == 0 else "AVAILABLE"
+            socketio.emit("floor_update", {**floor_info, "status": status})
+        return floor_id
 
     def get_floor(self, floor_id):
         with self._lock:
@@ -253,13 +237,24 @@ class Database:
         with self._lock:
             return dict(self.power)
 
-    def set_power_source(self, source):
+    def set_power_state(self, source, outage_mode):
+        """Update power source and outage mode, then emit to all clients."""
         with self._lock:
             self.power["source"] = source
+            self.power["outage_mode"] = outage_mode
+        socketio.emit("power_update", self.get_power_state())
 
-    def set_outage_mode(self, enabled):
+    # ---- Lockdown helpers ----
+
+    def get_lockdown(self):
         with self._lock:
-            self.power["outage_mode"] = enabled
+            return self.lockdown
+
+    def set_lockdown(self, enabled):
+        """Update lockdown flag and emit to all clients."""
+        with self._lock:
+            self.lockdown = bool(enabled)
+        socketio.emit("lockdown_update", {"active": self.lockdown})
 
     # ---- Admin auth helpers ----
 

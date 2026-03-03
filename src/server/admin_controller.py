@@ -108,15 +108,15 @@ def lockdown():
 
     data = request.get_json(force=True)
     enabled = data.get("enabled", True)
-    db.lockdown = bool(enabled)
-    db.log_event("Lockdown", details={"enabled": db.lockdown})
-    return jsonify({"lockdown": db.lockdown})
+    db.set_lockdown(enabled)
+    db.log_event("Lockdown", details={"enabled": db.get_lockdown()})
+    return jsonify({"lockdown": db.get_lockdown()})
 
 
 @admin_bp.route("/lockdown", methods=["GET"])
 def lockdown_status():
     """Get current lockdown state."""
-    return jsonify({"lockdown": db.lockdown})
+    return jsonify({"lockdown": db.get_lockdown()})
 
 
 # ---- Badge management ----

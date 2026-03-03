@@ -9,6 +9,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 
 from .database import db
+from .events import socketio
 from .gate_controller import gate_bp
 from .parking_controller import parking_bp
 from .admin_controller import admin_bp
@@ -18,6 +19,9 @@ from .power_controller import power_bp
 def create_app():
     app = Flask(__name__)
     CORS(app)
+
+    # Attach SocketIO to the Flask app
+    socketio.init_app(app)
 
     # Register component blueprints
     app.register_blueprint(gate_bp)
@@ -46,7 +50,7 @@ def create_app():
             "occupancy": db.get_occupancy(),
             "gates": db.get_all_gates(),
             "power": db.get_power_state(),
-            "lockdown": db.lockdown,
+            "lockdown": db.get_lockdown(),
         })
 
     return app
@@ -54,7 +58,11 @@ def create_app():
 
 def main():
     app = create_app()
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    # Use socketio.run so WebSocket upgrades are handled correctly.
+    # allow_unsafe_werkzeug is required for the dev reloader to coexist
+    # with simple-websocket WS upgrades.
+    socketio.run(app, host="127.0.0.1", port=5000, debug=True,
+                 allow_unsafe_werkzeug=True)
 
 
 if __name__ == "__main__":

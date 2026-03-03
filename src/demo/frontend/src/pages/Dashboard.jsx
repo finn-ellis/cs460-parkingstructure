@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
+    socket,
     getStatus,
     getOccupancy,
     vehicleDetected,
@@ -194,26 +195,29 @@ const S = {
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-    // Global
+    // Global state — updated exclusively via WebSocket events from the database
     const [occupancy, setOccupancy] = useState({ num_cars_inside: 0, capacity: 75, percentage: 0 });
     const [power, setPower] = useState({ source: 'grid', outage_mode: false });
     const [lockdown, setLockdown] = useState(false);
 
-    // Gates: full state mirrored from SSE (open, override, sensor states)
+    // Gates — full state mirrored from WebSocket gate_update events
     const [gates, setGates] = useState({
         1: { open: false, approach_sensor: false, clearance_sensor: false, override: false, override_state: false },
         2: { open: false, approach_sensor: false, clearance_sensor: false, override: false, override_state: false },
     });
 
-    // Floors: array of floor objects
+    // Floors — array of floor objects, updated via WebSocket floor_update events
     const [floors, setFloors] = useState([]);
 
-    // UI
+    // UI-only state
     const [selectedFloor, setSelectedFloor] = useState(1);
     const [rfidState, setRfidState] = useState('neutral'); // 'neutral' | 'valid' | 'invalid'
     const [badgeInput, setBadgeInput] = useState('');
     const [gateMsg, setGateMsg] = useState({ 1: '', 2: '' });
     const [loading, setLoading] = useState(true);
+
+    // Ref to track previous gate state for deriving messages from state transitions
+    const prevGatesRef = useRef(null);
 
     // ── Helpers ──────────────────────────────────────────────
     const flashRfid = useCallback((state) => {
@@ -226,7 +230,7 @@ export default function Dashboard() {
         setTimeout(() => setGateMsg((p) => ({ ...p, [gateId]: '' })), 3000);
     }, []);
 
-    // ── Init ─────────────────────────────────────────────────
+    // ── Init: fetch initial snapshot via REST ────────────────
     useEffect(() => {
         (async () => {
             try {
@@ -243,10 +247,12 @@ export default function Dashboard() {
                             override: !!g?.override,
                             override_state: !!g?.override_state,
                         });
-                        setGates({
+                        const initial = {
                             1: hydrate(status.gates['1']),
                             2: hydrate(status.gates['2']),
-                        });
+                        };
+                        setGates(initial);
+                        prevGatesRef.current = initial;
                     }
                 }
                 const occ = await getOccupancy();
@@ -262,63 +268,90 @@ export default function Dashboard() {
         })();
     }, []);
 
-    // ── SSE: live gate state push ────────────────────────────
+    // ── WebSocket: subscribe to all database state events ────
     useEffect(() => {
-        const es = new EventSource('/gate/stream');
-        es.onmessage = (e) => {
-            try {
-                const gate = JSON.parse(e.data);
-                if (gate.gate_id !== undefined) {
-                    setGates((prev) => ({
-                        ...prev,
-                        [gate.gate_id]: {
-                            ...prev[gate.gate_id],
-                            open: !!gate.open,
-                            approach_sensor: !!gate.approach_sensor,
-                            clearance_sensor: !!gate.clearance_sensor,
-                            override: !!gate.override,
-                            override_state: !!gate.override_state,
-                        },
-                    }));
+        function onGateUpdate(data) {
+            if (data.gate_id === undefined) return;
+            const gid = data.gate_id;
+            const next = {
+                open: !!data.open,
+                approach_sensor: !!data.approach_sensor,
+                clearance_sensor: !!data.clearance_sensor,
+                override: !!data.override,
+                override_state: !!data.override_state,
+            };
+            setGates((prev) => {
+                const updated = { ...prev, [gid]: { ...prev[gid], ...next } };
+                // Derive status messages from state transitions
+                const old = prevGatesRef.current?.[gid];
+                if (old) {
+                    if (!old.open && next.open) {
+                        setGateMessage(gid, gid === 1 ? 'Gate opened — awaiting vehicle' : 'Gate opened — vehicle may proceed');
+                    } else if (old.open && !next.open) {
+                        setGateMessage(gid, gid === 1 ? 'Vehicle entered — gate closing' : 'Vehicle exited — gate closing');
+                    }
+                    if (!old.approach_sensor && next.approach_sensor && !next.open && gid === 1) {
+                        setGateMessage(gid, 'Awaiting RFID badge scan…');
+                    }
                 }
-            } catch {
-                // ignore parse errors / heartbeat comments
-            }
-        };
-        es.onerror = () => {
-            // browser will auto-reconnect; nothing to do
-        };
-        return () => es.close();
-    }, []);
+                prevGatesRef.current = updated;
+                return updated;
+            });
+        }
 
-    // ── Gate handlers ────────────────────────────────────────
+        function onOccupancyUpdate(data) {
+            setOccupancy(data);
+        }
+
+        function onFloorUpdate(data) {
+            if (data.floor_id === undefined) return;
+            setFloors((prev) => {
+                const idx = prev.findIndex((f) => f.floor_id === data.floor_id);
+                if (idx === -1) return [...prev, data];
+                const next = [...prev];
+                next[idx] = { ...next[idx], ...data };
+                return next;
+            });
+        }
+
+        function onPowerUpdate(data) {
+            setPower(data);
+        }
+
+        function onLockdownUpdate(data) {
+            setLockdown(!!data.active);
+        }
+
+        socket.on('gate_update', onGateUpdate);
+        socket.on('occupancy_update', onOccupancyUpdate);
+        socket.on('floor_update', onFloorUpdate);
+        socket.on('power_update', onPowerUpdate);
+        socket.on('lockdown_update', onLockdownUpdate);
+
+        return () => {
+            socket.off('gate_update', onGateUpdate);
+            socket.off('occupancy_update', onOccupancyUpdate);
+            socket.off('floor_update', onFloorUpdate);
+            socket.off('power_update', onPowerUpdate);
+            socket.off('lockdown_update', onLockdownUpdate);
+        };
+    }, [setGateMessage]);
+
+    // ── Gate handlers (sensor simulation — fire-and-forget) ──
     const handleVehicleDetected = useCallback(async (gateId) => {
-        // Toggle the approach sensor: send the inverted current state
         const nextActive = !(gates[gateId]?.approach_sensor ?? false);
         const res = await vehicleDetected(gateId, nextActive);
         if (res._error) {
-            if (res.action === 'denied') {
-                setGateMessage(gateId, '⛔ LOCKDOWN — exit denied');
-            } else {
-                setGateMessage(gateId, res.error || 'Error');
-            }
-            return;
+            setGateMessage(gateId, res.error || 'Error');
         }
-        if (res.action === 'sensor_cleared') {
-            setGateMessage(gateId, '');
-        } else if (res.action === 'awaiting_rfid') {
-            setGateMessage(gateId, 'Awaiting RFID badge scan…');
-        } else if (res.action === 'gate_opened') {
-            setGateMessage(gateId, 'Gate opened — vehicle may proceed');
-        } else if (res.action === 'override_active') {
-            setGateMessage(gateId, 'Admin override active');
-        }
+        // State update arrives via WebSocket — no response processing needed
     }, [gates, setGateMessage]);
 
     const handleRfidScan = useCallback(async () => {
         const uid = badgeInput.trim();
         if (!uid) return;
         const res = await rfidScan(1, uid);
+        // RFID is a user action — response carries valid/invalid
         if (!res._error && res.valid) {
             flashRfid('valid');
             setGateMessage(1, `Badge ${uid} — ACCESS GRANTED`);
@@ -330,33 +363,21 @@ export default function Dashboard() {
     }, [badgeInput, flashRfid, setGateMessage]);
 
     const handleVehicleEntered = useCallback(async (gateId) => {
-        // Toggle the IR clearance sensor: send the inverted current state
         const nextActive = !(gates[gateId]?.clearance_sensor ?? false);
         const res = await vehicleEntered(gateId, nextActive);
         if (res._error) {
             setGateMessage(gateId, res.error || 'Error');
-            return;
         }
-        if (res.action === 'vehicle_in_path') {
-            setGateMessage(gateId, 'Vehicle in path…');
-        } else {
-            if (res.occupancy) setOccupancy(res.occupancy);
-            setGateMessage(
-                gateId,
-                gateId === 1 ? 'Vehicle entered — gate closing' : 'Vehicle exited — gate closing'
-            );
-        }
+        // State update arrives via WebSocket — no response processing needed
     }, [gates, setGateMessage]);
 
-    // ── Spot handler ─────────────────────────────────────────
+    // ── Spot handler (sensor simulation — fire-and-forget) ───
     const handleSpotClick = useCallback(async (spotId, currentlyOccupied) => {
         const res = await spotUpdate(spotId, !currentlyOccupied);
-        if (res._error) return;
-        setFloors((prev) =>
-            prev.map((f) =>
-                f.floor_id === res.floor.floor_id ? { ...f, ...res.floor } : f,
-            ),
-        );
+        if (res._error) {
+            console.error('Spot update error:', res.error);
+        }
+        // Floor state update arrives via WebSocket
     }, []);
 
     // ── Derived ──────────────────────────────────────────────

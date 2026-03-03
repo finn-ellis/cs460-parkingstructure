@@ -18,9 +18,10 @@ def spot_update():
     """
     isSpotOccupied(spotID) + toggleSpotLED(spotID, state) + updateFloorSign(floorID, count, status)
 
-    Called when a parking spot sensor detects a state change.
-    Updates the spot in the database and returns the new floor summary.
+    Sensor input: called when a parking spot sensor detects a state change.
+    Updates the spot in the database; the DB layer emits floor_update via WebSocket.
     Note: this does NOT change num_cars_inside (per use case 4.2).
+    Returns only {"success": true} — callers must not rely on this response for state.
     """
     data = request.get_json(force=True)
     spot_id = data.get("spot_id")
@@ -38,23 +39,12 @@ def spot_update():
     if floor_id is None:
         return jsonify({"error": "Spot not found"}), 404
 
-    floor_info = db.get_floor(floor_id)
-    status = "FULL" if floor_info["available"] == 0 else "AVAILABLE"
-
     db.log_event(
         "SpotUpdate",
         details={"spot_id": spot_id, "occupied": occupied, "floor_id": floor_id},
     )
 
-    return jsonify({
-        "spot_id": spot_id,
-        "occupied": occupied,
-        "led_on": not occupied,
-        "floor": {
-            **floor_info,
-            "status": status,
-        },
-    })
+    return jsonify({"success": True})
 
 
 @parking_bp.route("/occupancy", methods=["GET"])

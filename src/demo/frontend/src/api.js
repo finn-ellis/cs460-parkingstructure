@@ -1,9 +1,21 @@
 /**
  * API helper for the Parking Structure backend.
  * All calls go through the Vite proxy (same origin).
+ *
+ * State updates are delivered via a shared SocketIO WebSocket connection.
+ * POST endpoints that simulate sensor inputs return only {success: true}.
  */
 
+import { io } from 'socket.io-client';
+
 const BASE = '';
+
+// ── Shared SocketIO connection ─────────────────────────────
+// Connects through the Vite proxy at /socket.io
+export const socket = io(BASE, {
+    transports: ['polling', 'websocket'],
+    autoConnect: true,
+});
 
 async function request(method, path, body = null, token = null) {
     const headers = { 'Content-Type': 'application/json' };
@@ -54,5 +66,14 @@ export const getCameras = (token) => request('GET', '/admin/cctv', null, token);
 export const getCamera = (token, id) =>
     request('GET', `/admin/cctv/${id}`, null, token);
 
+export const getLockdownStatus = () => request('GET', '/admin/lockdown');
+export const setLockdown = (token, enabled) =>
+    request('POST', '/admin/lockdown', { enabled }, token);
+
 export const getEvents = (token, limit = 50) =>
     request('GET', `/admin/events?limit=${limit}`, null, token);
+
+// ── Power ───────────────────────────────────────────────────
+export const getPowerStatus = () => request('GET', '/power/status');
+export const powerFailure = () => request('POST', '/power/failure');
+export const powerRestore = () => request('POST', '/power/restore');

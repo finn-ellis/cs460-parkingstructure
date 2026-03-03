@@ -1,5 +1,12 @@
 """
 Pytest fixtures for the ParkingStructure server tests.
+
+The ``reset_db`` fixture re-initialises the in-memory database singleton
+before every test so each test starts from a known clean state.
+
+The ``client`` fixture creates a fully-initialised Flask + SocketIO app
+so that ``socketio.emit()`` calls inside the business logic work normally
+(even though no real WebSocket clients are connected during tests).
 """
 
 import pytest
@@ -9,28 +16,13 @@ from src.server.database import db
 
 @pytest.fixture(autouse=True)
 def reset_db():
-    """Reset the in-memory database singleton to a clean state before each test."""
-    db.badges = {"B001", "B002", "B003", "B004", "B005"}
-    db.spots = {
-        1: {f"1-{i:02d}": False for i in range(1, 26)},
-        2: {f"2-{i:02d}": False for i in range(1, 26)},
-        3: {f"3-{i:02d}": False for i in range(1, 26)},
-    }
-    db.capacity = 75
-    db.num_cars_inside = 0
-    db.gates = {
-        1: {"type": "entry", "open": False, "override": False, "override_state": False},
-        2: {"type": "exit", "open": False, "override": False, "override_state": False},
-    }
-    db.event_log = []
-    db.power = {"source": "grid", "outage_mode": False}
-    db.lockdown = False
-    db.admin_tokens = set()
+    """Re-initialise the database singleton to a clean state before each test."""
+    db.__init__()
 
 
 @pytest.fixture
 def client():
-    """Flask test client with testing mode enabled."""
+    """Flask test client backed by a fully-initialised app (Flask + SocketIO)."""
     app = create_app()
     app.config["TESTING"] = True
     with app.test_client() as c:

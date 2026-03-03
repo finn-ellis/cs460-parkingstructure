@@ -6,15 +6,11 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/gate/stream': {
+      // WebSocket (socket.io) — must proxy both HTTP polling and WS upgrade
+      '/socket.io': {
         target: 'http://127.0.0.1:5000',
         changeOrigin: true,
-        // Disable response buffering so SSE events flow through immediately
-        configure: (proxy) => {
-          proxy.on('proxyRes', (proxyRes) => {
-            proxyRes.headers['x-accel-buffering'] = 'no';
-          });
-        },
+        ws: true,
       },
       '/gate': 'http://127.0.0.1:5000',
       '/parking': 'http://127.0.0.1:5000',
@@ -23,6 +19,7 @@ export default defineConfig({
       '/admin/gate-override': 'http://127.0.0.1:5000',
       '/admin/badges': 'http://127.0.0.1:5000',
       '/admin/cctv': 'http://127.0.0.1:5000',
+      '/admin/lockdown': 'http://127.0.0.1:5000',
       '/admin/events': 'http://127.0.0.1:5000',
       '/power': 'http://127.0.0.1:5000',
       '/status': 'http://127.0.0.1:5000',

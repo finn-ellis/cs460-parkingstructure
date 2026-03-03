@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
+    socket,
     adminLogin,
     adminLogout,
     gateOverride,
@@ -10,6 +11,8 @@ import {
     getCamera,
     getEvents,
     getAllGateStatus,
+    setLockdown,
+    getLockdownStatus,
 } from '../api';
 
 // ─── Styles ────────────────────────────────────────────────────────────────────
@@ -376,6 +379,9 @@ export default function Admin() {
     const [gates, setGates] = useState({});
     const [gateMsg, setGateMsg] = useState({ 1: '', 2: '' });
 
+    // Lockdown
+    const [lockdown, setLockdownState] = useState(false);
+
     // Badges
     const [badges, setBadges] = useState([]);
     const [newBadgeUid, setNewBadgeUid] = useState('');
@@ -445,6 +451,11 @@ export default function Admin() {
         if (!res._error && res.cameras) setCameras(res.cameras);
     }, [token]);
 
+    const fetchLockdown = useCallback(async () => {
+        const res = await getLockdownStatus();
+        if (!res._error) setLockdownState(!!res.lockdown);
+    }, []);
+
     // ── Init on login ────────────────────────────────────────
     useEffect(() => {
         if (!token) return;
@@ -452,7 +463,30 @@ export default function Admin() {
         fetchBadges();
         fetchCameras();
         fetchEvents();
-    }, [token, fetchGates, fetchBadges, fetchCameras, fetchEvents]);
+        fetchLockdown();
+    }, [token, fetchGates, fetchBadges, fetchCameras, fetchEvents, fetchLockdown]);
+
+    // ── WebSocket: subscribe to database state events ────────
+    useEffect(() => {
+        function onGateUpdate(data) {
+            if (data.gate_id === undefined) return;
+            const gid = String(data.gate_id);
+            setGates((prev) => ({
+                ...prev,
+                [gid]: { ...prev[gid], ...data },
+            }));
+        }
+        function onLockdownUpdate(data) {
+            setLockdownState(!!data.active);
+        }
+
+        socket.on('gate_update', onGateUpdate);
+        socket.on('lockdown_update', onLockdownUpdate);
+        return () => {
+            socket.off('gate_update', onGateUpdate);
+            socket.off('lockdown_update', onLockdownUpdate);
+        };
+    }, []);
 
     // ── Gate override handlers ───────────────────────────────
     const handleGateOverride = useCallback(async (gateId, override, state) => {
@@ -462,11 +496,19 @@ export default function Admin() {
         } else {
             const label = !override ? 'Override disabled' : state ? 'Forced OPEN' : 'Forced CLOSED';
             setGateMsg((p) => ({ ...p, [gateId]: label }));
-            fetchGates();
-            fetchEvents();
+            fetchEvents(); // events don't have a WebSocket push — poll after action
         }
         setTimeout(() => setGateMsg((p) => ({ ...p, [gateId]: '' })), 3000);
-    }, [token, fetchGates, fetchEvents]);
+    }, [token, fetchEvents]);
+
+    // ── Lockdown handler ─────────────────────────────────────
+    const handleLockdown = useCallback(async (enabled) => {
+        const res = await setLockdown(token, enabled);
+        if (res._error) {
+            console.error('Lockdown error:', res.error);
+        }
+        fetchEvents();
+    }, [token, fetchEvents]);
 
     // ── Badge handlers ───────────────────────────────────────
     const handleAddBadge = useCallback(async () => {
@@ -626,6 +668,29 @@ export default function Admin() {
                             </div>
                         );
                     })}
+                </div>
+
+                {/* ── Lockdown Control ─────────────────────── */}
+                <div style={S.card}>
+                    <h2 style={S.cardTitle}>Facility Lockdown</h2>
+                    <div style={S.gateSection}>
+                        <div style={S.gateStatusRow}>
+                            <span style={S.statusChip(lockdown, '#ef476f')}>
+                                {lockdown ? '🔒 LOCKDOWN ACTIVE' : '🟢 Normal Operation'}
+                            </span>
+                        </div>
+                        <p style={{ fontSize: '.85rem', color: '#888', margin: '8px 0 12px' }}>
+                            Lockdown prevents all vehicles from exiting the facility.
+                        </p>
+                        <div style={S.btnRow}>
+                            <button
+                                style={{ ...S.btn, ...(lockdown ? S.btnSuccess : S.btnDanger) }}
+                                onClick={() => handleLockdown(!lockdown)}
+                            >
+                                {lockdown ? 'Disable Lockdown' : 'Enable Lockdown'}
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 {/* ── Badge Management ─────────────────────── */}
