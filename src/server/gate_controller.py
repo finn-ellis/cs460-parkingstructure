@@ -133,8 +133,8 @@ def rfid_scan():
 def vehicle_entered():
     """
     Ultrasonic clearance-sensor input.
-    active=True  : beam broken — vehicle is in the gate path.
-    active=False : beam restored — vehicle has fully cleared.
+    active=True  : vehicle detected in the gate path.
+    active=False : path clear; vehicle has fully passed.
 
     Falling edge triggers:
       - occupancy increment/decrement (→ occupancy_update WebSocket event)

@@ -35,7 +35,7 @@ HTTP 403
 
 ### 1.2 Gate Entered Sensor — vehicle has cleared the gate
 
-Fires after the infrared sensor confirms the vehicle has fully passed through. Closes the gate and updates occupancy.
+Fires after the ultrasonic clearance sensor confirms the vehicle has fully passed through. Closes the gate and updates occupancy.
 
 **Entry gate (after a successful RFID scan):**
 ```

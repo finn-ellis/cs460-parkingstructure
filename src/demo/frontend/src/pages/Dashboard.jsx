@@ -475,9 +475,9 @@ export default function Dashboard() {
                             <button
                                 style={{ ...S.btn, ...(gates[1].clearance_sensor ? S.btnSensorOn : S.btnPrimary) }}
                                 onClick={() => handleVehicleEntered(1)}
-                                title="IR clearance sensor — ON while vehicle in path, OFF when cleared"
+                                title="Ultrasonic clearance sensor — ON while vehicle in path, OFF when cleared"
                             >
-                                {gates[1].clearance_sensor ? '● IR Sensor: ON' : 'IR Sensor (Entry)'}
+                                {gates[1].clearance_sensor ? '● Ultrasonic: ON' : 'Ultrasonic (Entry)'}
                             </button>
                         </div>
                         <div
@@ -512,9 +512,9 @@ export default function Dashboard() {
                             <button
                                 style={{ ...S.btn, ...(gates[2].clearance_sensor ? S.btnSensorOn : S.btnPrimary) }}
                                 onClick={() => handleVehicleEntered(2)}
-                                title="IR clearance sensor — ON while vehicle in path, OFF when cleared"
+                                title="Ultrasonic clearance sensor — ON while vehicle in path, OFF when cleared"
                             >
-                                {gates[2].clearance_sensor ? '● IR Sensor: ON' : 'IR Sensor (Exit)'}
+                                {gates[2].clearance_sensor ? '● Ultrasonic: ON' : 'Ultrasonic (Exit)'}
                             </button>
                         </div>
                         <div

@@ -188,7 +188,7 @@ The Main Controller instructs the Gate Controller to raise the exit barrier.
 
 setGateState(int gateID, true)
 
-The vehicle passes through the gate; the Gate Controller monitors the path via the infrared sensor to ensure the lane is clear.
+The vehicle passes through the gate; the Gate Controller monitors the path via the ultrasonic clearance sensor to ensure the lane is clear.
 
 
 

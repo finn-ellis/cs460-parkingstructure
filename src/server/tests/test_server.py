@@ -22,8 +22,8 @@ def _enter_vehicle(client, badge_uid="B001"):
 
     1. Approach sensor fires  (vehicle-detected)
     2. Driver presents badge  (rfid-scan)
-    3. IR beam breaks          (vehicle-entered active=True)
-    4. IR beam restores        (vehicle-entered active=False → occupancy++)
+    3. Ultrasonic detects car  (vehicle-entered active=True)
+    4. Ultrasonic clears       (vehicle-entered active=False → occupancy++)
     """
     client.post("/gate/vehicle-detected", json={"gate_id": 1})
     client.post("/gate/rfid-scan", json={"gate_id": 1, "badge_uid": badge_uid})
@@ -35,8 +35,8 @@ def _exit_vehicle(client):
     """Drive one car through the complete exit sequence (gate 2).
 
     1. Approach sensor fires  (vehicle-detected → gate opens)
-    2. IR beam breaks          (vehicle-entered active=True)
-    3. IR beam restores        (vehicle-entered active=False → occupancy--)
+    2. Ultrasonic detects car  (vehicle-entered active=True)
+    3. Ultrasonic clears       (vehicle-entered active=False → occupancy--)
     """
     client.post("/gate/vehicle-detected", json={"gate_id": 2})
     client.post("/gate/vehicle-entered", json={"gate_id": 2, "active": True})
@@ -235,7 +235,7 @@ class TestExitFlow:
         assert client.post("/gate/vehicle-entered", json={"gate_id": 99}).status_code == 404
 
     def test_closed_gate_rejects_vehicle_entered(self, client):
-        """IR sensor firing on a closed gate is an invalid sequence."""
+        """Ultrasonic sensor firing on a closed gate is an invalid sequence."""
         resp = client.post("/gate/vehicle-entered", json={"gate_id": 1, "active": False})
         assert resp.status_code == 400
 

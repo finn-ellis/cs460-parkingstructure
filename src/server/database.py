@@ -34,7 +34,7 @@ class Database:
         # --- Gates ---
         # gate 1 = entry, gate 2 = exit
         # approach_sensor : True while a vehicle is waiting at the approach lane
-        # clearance_sensor: True while a vehicle is breaking the IR beam in the gate path
+        # clearance_sensor: True while the ultrasonic clearance sensor detects a vehicle in the gate path
         self.gates = {
             1: {"type": "entry", "open": False, "override": False, "override_state": False,
                 "approach_sensor": False, "clearance_sensor": False},
@@ -127,7 +127,7 @@ class Database:
         return True
 
     def set_clearance_sensor(self, gate_id, active):
-        """IR clearance sensor: True = vehicle is in the gate path (beam broken)."""
+        """Ultrasonic clearance sensor: True = vehicle is in the gate path (detected)."""
         with self._lock:
             if gate_id not in self.gates:
                 return False
