@@ -132,7 +132,7 @@ def rfid_scan():
 @gate_bp.route("/vehicle-entered", methods=["POST"])
 def vehicle_entered():
     """
-    IR clearance-sensor input.
+    Ultrasonic clearance-sensor input.
     active=True  : beam broken — vehicle is in the gate path.
     active=False : beam restored — vehicle has fully cleared.
 
@@ -158,7 +158,7 @@ def vehicle_entered():
         # Rising edge: vehicle entering the path — wait for it to clear
         return jsonify({"success": True})
 
-    # Falling edge: vehicle has fully cleared the IR beam
+    # Falling edge: vehicle has fully cleared the ultrasonic sensor
     if not gate["open"] and not gate["override"]:
         return jsonify({"error": "Gate is closed; invalid sensor sequence"}), 400
 
